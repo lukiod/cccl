@@ -20,6 +20,7 @@
 #include <exception>
 #include <future>
 #include <numeric>
+#include <string>
 #include <vector>
 
 #include <algorithm_common.h>
@@ -82,6 +83,80 @@ void do_segmented_reduce_threaded(
   }
 }
 } // namespace
+
+MULTI_GPU_TEST("segmented_reduce single-comm documentation example", c2h::type_list<int>)
+{
+  auto comms = this->communicators();
+
+  if (comms.size() != 2)
+  {
+    SKIP("The segmented_reduce documentation example requires exactly two local GPUs");
+  }
+
+  auto streams_owned = nccl_test_util::make_streams();
+  auto streams       = std::vector<cuda::stream_ref>{streams_owned.begin(), streams_owned.end()};
+
+  // Must be pre-allocated since it is written to by threads
+  std::vector<std::string> failed(comms.front().size());
+
+  // Every communicator rank must invoke the collective concurrently.
+  run_threaded(comms.size(), [&](cuda::std::size_t i) {
+    auto& communicator = comms[i];
+    auto& stream       = streams[i];
+    // Rename the stream to env for the example
+    auto& env = stream;
+
+    //! [segmented_reduce_single_range]
+    // Two segments per rank: {1, 2} and {3, 4, 5}.
+    constexpr cuda::std::array input_values{1, 2, 3, 4, 5};
+    constexpr cuda::std::array offset_values{0, 2, 5};
+    constexpr cuda::std::size_t num_segments = offset_values.size() - 1;
+
+    const auto device = communicator.logical_device().underlying_device();
+
+    auto input   = cuda::make_device_buffer<int>(stream, device, input_values);
+    auto offsets = cuda::make_device_buffer<int>(stream, device, offset_values);
+    auto output  = cuda::make_device_buffer<int>(stream, device, num_segments, cuda::no_init);
+
+    cudax::segmented_reduce(
+      cudax::broadcasted,
+      communicator,
+      env,
+      input.begin(),
+      num_segments,
+      // Segment `s` covers [begin_offsets[s], end_offsets[s]), so the end offsets are just the
+      // begin offsets shifted by one.
+      offsets.begin(),
+      offsets.begin() + 1,
+      output.begin(),
+      /*__init=*/0);
+
+    // Every rank contributes the same two segments, so segment 0 sums to 3 * nranks and segment
+    // 1 to 12 * nranks. `segmented_reduce` broadcasts the result, so every rank sees the same
+    // values.
+    const auto nranks = communicator.size();
+    const std::vector<int> expected_values{3 * nranks, 12 * nranks};
+    const auto expected =
+      cuda::make_buffer<int>(output.stream(), cuda::mr::legacy_pinned_memory_resource{}, expected_values);
+    //! [segmented_reduce_single_range]
+
+    // catch2 isn't thread safe by default, so we can't use the usual requires expression. So
+    // we roll a hacky version of it ourselves
+    if (const auto matcher = Equals(expected); !matcher.match(output))
+    {
+      failed[communicator.rank()] = matcher.describe();
+    }
+  });
+
+  for (cuda::std::size_t i = 0; i < failed.size(); ++i)
+  {
+    if (const auto& err_str = failed[i]; !err_str.empty())
+    {
+      INFO("rank: " << i);
+      REQUIRE(err_str == ""); // Should print the full error string
+    }
+  }
+}
 
 MULTI_GPU_TEST("segmented_reduce single-comm, one segment of one element per rank", value_types, operators)
 {

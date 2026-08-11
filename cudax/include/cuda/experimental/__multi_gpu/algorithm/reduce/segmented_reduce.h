@@ -309,6 +309,90 @@ _CCCL_HOST_API void __butterfly_reduction(
 }
 } // namespace __detail::__segmented_reduce
 
+//! @brief Reduce each input range segment-by-segment over its communicator and write one result
+//! per segment to each output iterator.
+//!
+//! A plain reduction combines a whole range into a single value. A segmented reduction divides
+//! the range into consecutive pieces, called segments, and reduces each segment independently.
+//! It writes one value per segment instead of one value in total.
+//!
+//! Consider a matrix stored row by row. A plain reduction returns the total over the entire
+//! matrix. A segmented reduction with one segment per row returns the total of each row,
+//! turning a 2D matrix into a 1D column of row totals. A segmented reduction thus removes one
+//! dimension and keeps the remaining ones. A plain reduction can therefore be described as an
+//! `N -> 1` operation while a segmented reduction as an `N -> N-1` operation.
+//!
+//! Each segment must occupy a contiguous run of the input and cannot overlap, but they need
+//! not occupy adjacent memory regions (the input can have "holes" betweens segments). Segment
+//! `s` covers `[__offset_begin[s], __offset_end[s])`, so the offsets describe the full layout.
+//!
+//! The same rule applies across ranks. Segment `s` on one rank and segment `s` on another rank
+//! are two pieces of the same row. Each row can therefore be divided over the communicator, with
+//! every rank holding a piece of every row. As an example, take a matrix divided by columns
+//! across the ranks, so that each rank holds some columns of every row. Treating one row as one
+//! segment reduces each row across all ranks and returns one value per row:
+//!
+//! ```
+//!   input             local reduction   global reduction
+//!   GPU 0   GPU 1     GPU 0   GPU 1     GPU 0   GPU 1
+//!   columns ->
+//! r 1 1 1 | 1 1 1         3 | 3             6 | 6
+//! o 1 1 1 | 1 1 1         3 | 3             6 | 6
+//! w 1 1 1 | 1 1 1         3 | 3             6 | 6
+//! s 1 1 1 | 1 1 1   =>    3 | 3    =>       6 | 6
+//! | 1 1 1 | 1 1 1         3 | 3             6 | 6
+//! | 1 1 1 | 1 1 1         3 | 3             6 | 6
+//! V 1 1 1 | 1 1 1         3 | 3             6 | 6
+//!   1 1 1 | 1 1 1         3 | 3             6 | 6
+//! ```
+//!
+//! Each rank first reduces its own piece of every row, then the ranks combine those partial
+//! results into the total for each row.
+//!
+//! The passed environments are also passed directly to CUB reductions, and may therefore contain
+//! any parameters recognized by CUB.
+//!
+//! `__num_segments`, `__init` and `__ident` must have the same value across all ranks calling
+//! this routine. The segment lengths themselves need not match across ranks; only the number of
+//! segments must.
+//!
+//! This routine is used when the current thread or process owns multiple local GPUs. For
+//! example, consider a scenario where there are 8 GPUs and 4 processes such that each process
+//! owns 2 GPUs. Then the user would call this routine on each process, passing in both local
+//! arrays:
+//!
+//! @snippet segmented_reduce/range_basic.cu segmented_reduce
+//!
+//! All ranges must have the same length. The algorithm will cap iteration to the shortest
+//! length, but this should not be relied upon and may change at any time, for any reason. So
+//! differing lengths is effectively undefined behavior.
+//!
+//! Each output iterator must have room for `__num_segments` values. A segment that is empty on
+//! every rank produces `__init`, so the output is always fully written.
+//!
+//! The identity element should survive reduction with any other value, returning the original
+//! value unchanged. For example, for integers/floats and `cuda::std::plus`, the identity element
+//! is 0. For maximum and minimum, the identity values are INT_MIN, and INT_MAX respectively.
+//!
+//! If the result policy is `cudax::broadcasted`, then each rank will receive identical values
+//! in the input region.
+//!
+//! @param[in] __policy The result policy object. Currently must be `cudax::broadcasted`.
+//! @param[in] __comms The range of communicators.
+//! @param[in] __envs The range of execution environments. The execution environment must contain
+//!                   a stream.
+//! @param[in] __input_iters The range of per-communicator input iterators to reduce.
+//! @param[in] __num_segments The number of segments per input iterator. Must be identical on
+//!                           every rank.
+//! @param[in] __offset_begin_iters The range of per-communicator iterators to the segment begin
+//!                                 offsets. Each must be readable for `__num_segments` values.
+//! @param[in] __offset_end_iters The range of per-communicator iterators to the segment end
+//!                               offsets. Each must be readable for `__num_segments` values.
+//! @param[out] __output_iters The range of output iterators receiving the per-segment results.
+//!                            Each must be writable for `__num_segments` values.
+//! @param[in] __init The initial value seeding each segment reduction.
+//! @param[in] __op The binary reduction operator.
+//! @param[in] __ident The identity element to be used in case of empty segments.
 _CCCL_TEMPLATE(
   class _Policy,
   class _CommRange,
@@ -406,6 +490,31 @@ _CCCL_HOST_API void segmented_reduce(
   }
 }
 
+//! @brief Reduce a single input range segment-by-segment over a single communicator using the
+//! given execution environment.
+//!
+//! Convenience wrapper that forwards a single `(communicator, environment, input iterator,
+//! begin offset iterator, end offset iterator, output iterator)` to the range-based overload.
+//! See the range overload for a description of the algorithm and of the segment layout the
+//! offsets must describe.
+//!
+//! @snippet segmented_reduce/single_comm_basic.cu segmented_reduce_single_range
+//!
+//! @param[in] __policy The result policy object. Currently must be `cudax::broadcasted`.
+//! @param[in] __comm The communicator.
+//! @param[in] __env The execution environment. Must contain a stream.
+//! @param[in] __input The input iterator to reduce.
+//! @param[in] __num_segments The number of segments in `__input`. Must be identical on every
+//!                           rank.
+//! @param[in] __offset_begin The iterator to the segment begin offsets. Must be readable for
+//!                           `__num_segments` values.
+//! @param[in] __offset_end The iterator to the segment end offsets. Must be readable for
+//!                         `__num_segments` values.
+//! @param[out] __output The output iterator receiving the per-segment results. Must be writable
+//!                      for `__num_segments` values.
+//! @param[in] __init The initial value seeding each segment reduction.
+//! @param[in] __op The binary reduction operator.
+//! @param[in] __ident The identity element to be used in case of empty segments.
 _CCCL_TEMPLATE(
   class _Policy,
   class _Comm,
