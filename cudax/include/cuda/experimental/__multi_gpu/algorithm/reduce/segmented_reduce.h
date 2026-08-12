@@ -154,6 +154,7 @@ _CCCL_HOST_API void __exchange_and_fold(
         auto __send       = __buf.subspan(0, __num_segments);
         auto __recv       = __buf.subspan(__num_segments, __num_segments);
 
+        _CCCL_ASSERT(__participates(__peer), "peer rank must participate in exchange");
         __comm.send(__guard, __send.data(), __num_segments, __peer, __buf.stream());
         __comm.recv(__guard, __recv.data(), __num_segments, __peer, __buf.stream());
       }
