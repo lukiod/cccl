@@ -231,7 +231,7 @@ _CCCL_HOST_API void __butterfly_reduction(
   // n: local size (__num_segments)
   //
   // Combine the per-rank partials with a butterfly all-reduce. We implement such a complicated
-  // algorithm is because a naive all-gather and local reduce requires `k*n` local
+  // algorithm because a naive all-gather and local reduce requires `k*n` local
   // storage. This is not so bad when `n=1` (like in normal reduce), but here `n` is
   // `__num_segments` and potentially quite large. Butterfly reductions require only `2n`
   // temporary storage and finish in `log2(k)` steps. The tradeoff is that each step
