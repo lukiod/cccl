@@ -39,24 +39,21 @@ __device__ void test_level_synchronizer(const Level& level, Config config)
     using SynchronizerInstance = typename Synchronizer::template __synchronizer_instance<Level>;
 
     MappingResult mapping_result{};
-    Synchronizer synchronizer{};
 
     // Test default constructor.
     static_assert(cuda::std::is_nothrow_default_constructible_v<SynchronizerInstance>);
     SynchronizerInstance synchronizer_instance{};
 
     // Test do_sync(...).
-    static_assert(
-      cuda::std::is_same_v<void, decltype(synchronizer_instance.do_sync(mapping_result, synchronizer, hierarchy))>);
-    static_assert(noexcept(synchronizer_instance.do_sync(mapping_result, synchronizer, hierarchy)));
-    synchronizer_instance.do_sync(mapping_result, synchronizer, hierarchy);
+    static_assert(cuda::std::is_same_v<void, decltype(synchronizer_instance.do_sync(mapping_result, hierarchy))>);
+    static_assert(noexcept(synchronizer_instance.do_sync(mapping_result, hierarchy)));
+    synchronizer_instance.do_sync(mapping_result, hierarchy);
 
     // Test do_sync_aligned(...).
     static_assert(
-      cuda::std::is_same_v<void,
-                           decltype(synchronizer_instance.do_sync_aligned(mapping_result, synchronizer, hierarchy))>);
-    static_assert(noexcept(synchronizer_instance.do_sync_aligned(mapping_result, synchronizer, hierarchy)));
-    synchronizer_instance.do_sync_aligned(mapping_result, synchronizer, hierarchy);
+      cuda::std::is_same_v<void, decltype(synchronizer_instance.do_sync_aligned(mapping_result, hierarchy))>);
+    static_assert(noexcept(synchronizer_instance.do_sync_aligned(mapping_result, hierarchy)));
+    synchronizer_instance.do_sync_aligned(mapping_result, hierarchy);
   }
 }
 

@@ -48,6 +48,29 @@ using _SpanElementType = typename _Span::element_type;
 
 template <class _Span>
 using _SpanValueType = typename _Span::value_type;
+
+template <class _Unit, class _ParentGroup>
+[[nodiscard]] _CCCL_DEVICE_API constexpr auto __get_initial_mapping_result(const _ParentGroup& __parent) noexcept
+{
+  using _ParentMappingResult = typename _ParentGroup::__mapping_result_type;
+  using _MappingResult =
+    ::cuda::experimental::__mapping_result<1,
+                                           ::cuda::experimental::__static_count_query_group<_Unit, _ParentGroup>(),
+                                           _ParentMappingResult::is_always_exhaustive(),
+                                           _ParentMappingResult::is_always_contiguous()>;
+  return _MappingResult{
+    1,
+    0,
+    ::cuda::experimental::__count_query_group<unsigned, _Unit>(__parent),
+    ::cuda::experimental::__rank_query_group<unsigned, _Unit>(__parent),
+    __parent.__mapping_result().lane_mask()};
+}
+
+template <class _Unit, class _ParentGroup, class _Mapping>
+using __group_mapping_result_t = decltype(::cuda::std::declval<const _Mapping&>().map(
+  ::cuda::std::declval<const _Unit&>(),
+  ::cuda::std::declval<const _ParentGroup&>(),
+  ::cuda::experimental::__get_initial_mapping_result<_Unit>(::cuda::std::declval<const _ParentGroup&>())));
 } // namespace cuda::experimental
 
 #endif // !_CCCL_DOXYGEN_INVOKED

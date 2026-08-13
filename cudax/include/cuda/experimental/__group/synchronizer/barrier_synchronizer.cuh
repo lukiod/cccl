@@ -64,6 +64,57 @@ inline constexpr thread_scope __barrier_scope_v = thread_scope_system;
 template <thread_scope _Sco, class _ComplFn>
 inline constexpr thread_scope __barrier_scope_v<barrier<_Sco, _ComplFn>> = _Sco;
 
+template <class _Barrier>
+class __barrier_synchronizer_instance_view
+{
+  _Barrier* __barrier_;
+
+protected:
+  _CCCL_DEVICE_API explicit __barrier_synchronizer_instance_view(_Barrier* __barrier) noexcept
+      : __barrier_{__barrier}
+  {}
+
+public:
+  template <class _MappingResult, class _Hierarchy>
+  _CCCL_DEVICE_API void do_sync(const _MappingResult& __mapping_result, const _Hierarchy&) const noexcept
+  {
+    __barrier_->arrive_and_wait();
+  }
+
+  template <class _MappingResult, class _Hierarchy>
+  _CCCL_DEVICE_API void do_sync_aligned(const _MappingResult& __mapping_result, const _Hierarchy&) const noexcept
+  {
+    __barrier_->arrive_and_wait();
+  }
+
+  [[nodiscard]] _CCCL_DEVICE_API __barrier_synchronizer_instance_view<_Barrier> view() const noexcept
+  {
+    return *this;
+  }
+};
+
+template <class _Barrier>
+class __barrier_synchronizer_instance : public __barrier_synchronizer_instance_view<_Barrier>
+{
+  using __base_type = __barrier_synchronizer_instance_view<_Barrier>;
+
+public:
+  [[nodiscard]] _CCCL_DEVICE_API static __barrier_synchronizer_instance invalid() noexcept
+  {
+    return __barrier_synchronizer_instance{nullptr};
+  }
+
+  _CCCL_DEVICE_API explicit __barrier_synchronizer_instance(_Barrier* __barrier) noexcept
+      : __base_type{__barrier}
+  {}
+
+  template <class _MappingResult, class _Hierarchy>
+  _CCCL_DEVICE_API void deinit(const _MappingResult& __mapping_result, const _Hierarchy&) noexcept
+  {
+    // todo(dabayer): We don't expose deinit(_Barrier), add deinitialization once available.
+  }
+};
+
 template <class _Barrier, ::cuda::std::size_t _Np>
 class barrier_synchronizer
 {
@@ -74,24 +125,7 @@ class barrier_synchronizer
 public:
   using barrier_type = _Barrier;
 
-  struct __synchronizer_instance
-  {
-    template <class _MappingResult, class _Hierarchy>
-    _CCCL_DEVICE_API void do_sync(const _MappingResult& __mapping_result,
-                                  const barrier_synchronizer& __synchronizer,
-                                  const _Hierarchy&) const noexcept
-    {
-      __synchronizer.__barriers_[__mapping_result.group_rank()].arrive_and_wait();
-    }
-
-    template <class _MappingResult, class _Hierarchy>
-    _CCCL_DEVICE_API void do_sync_aligned(const _MappingResult& __mapping_result,
-                                          const barrier_synchronizer& __synchronizer,
-                                          const _Hierarchy&) const noexcept
-    {
-      __synchronizer.__barriers_[__mapping_result.group_rank()].arrive_and_wait();
-    }
-  };
+  using __synchronizer_instance = __barrier_synchronizer_instance<_Barrier>;
 
   _CCCL_DEVICE_API barrier_synchronizer(::cuda::std::span<_Barrier, _Np> __barriers) noexcept
       : __barriers_(__barriers)
@@ -138,7 +172,7 @@ public:
 
     // todo(dabayer): How we can expose making this aligned?
     __parent.sync();
-    return {};
+    return __synchronizer_instance{__barriers_.data() + __mapping_result.group_rank()};
   }
 };
 
